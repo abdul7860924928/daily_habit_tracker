@@ -57,14 +57,17 @@ class StreakCalendarBar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppDimens.p16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: streakDays.map((day) {
-              return _DayStreakItem(
-                info: day,
-                onTap: onDayTap != null ? () => onDayTap!(day) : null,
-              );
-            }).toList(),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: streakDays.map((day) {
+                return _DayStreakItem(
+                  info: day,
+                  onTap: onDayTap != null ? () => onDayTap!(day) : null,
+                );
+              }).toList(),
+            ),
           ),
         ],
       ),
