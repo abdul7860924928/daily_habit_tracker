@@ -44,16 +44,62 @@ class _AddHabitScreenState extends State<AddHabitScreen> {
   void _submitForm() {
     if (_formKey.currentState?.validate() ?? false) {
       final points = int.tryParse(_pointsController.text.trim()) ?? 10;
+      final habitName = _nameController.text.trim();
+
       context.read<HabitBloc>().add(
             HabitAdded(
               AddHabitParams(
-                name: _nameController.text.trim(),
+                name: habitName,
                 description: _descriptionController.text.trim(),
                 points: points,
                 category: _selectedCategory,
               ),
             ),
           );
+
+      // Show toast notification
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: Colors.white24,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Habit "$habitName" created successfully! 🌟',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.emeraldPrimary,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimens.radiusMedium),
+          ),
+          elevation: 6,
+        ),
+      );
+
+      // Navigate back immediately to Today's Habits screen
+      context.pop();
     }
   }
 
@@ -61,36 +107,14 @@ class _AddHabitScreenState extends State<AddHabitScreen> {
   Widget build(BuildContext context) {
     return BlocListener<HabitBloc, HabitState>(
       listener: (context, state) {
-        if (state is HabitLoaded) {
-          if (state.habitAddedSuccess) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.check_circle_rounded, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        state.successMessage ?? 'Habit created successfully!',
-                      ),
-                    ),
-                  ],
-                ),
-                backgroundColor: AppColors.emeraldPrimary,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 2),
-              ),
-            );
-            context.pop();
-          } else if (state.errorMessage != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.errorMessage!),
-                backgroundColor: AppColors.error,
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          }
+        if (state is HabitLoaded && state.errorMessage != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(state.errorMessage!),
+              backgroundColor: AppColors.error,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         }
       },
       child: Scaffold(

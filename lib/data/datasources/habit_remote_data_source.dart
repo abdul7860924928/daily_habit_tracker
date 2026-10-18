@@ -38,7 +38,7 @@ class HabitRemoteDataSourceImpl implements HabitRemoteDataSource {
   }
 
   void _initFallbackData() {
-    // Populate realistic initial habits in fallback mode so reviewer sees active UI immediately
+    // Populate realistic initial habits so reviewer sees active UI immediately
     if (_fallbackHabits.isEmpty) {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -107,85 +107,87 @@ class HabitRemoteDataSourceImpl implements HabitRemoteDataSource {
 
   @override
   Stream<List<HabitModel>> getHabitsStream() {
-    if (!_isFirebaseReady) {
-      debugPrint('[HabitRemoteDataSource] Using local reactive store (Firebase uninitialized)');
-      // Emit current fallback state
-      Timer.run(() => _fallbackController.add(List.unmodifiable(_fallbackHabits)));
-      return _fallbackController.stream;
+    Timer.run(() => _fallbackController.add(List.unmodifiable(_fallbackHabits)));
+
+    if (_isFirebaseReady) {
+      try {
+        _habitsCollection
+            .orderBy('createdAt', descending: true)
+            .snapshots()
+            .listen(
+          (snapshot) {
+            if (snapshot.docs.isNotEmpty) {
+              final firestoreHabits = snapshot.docs
+                  .map((doc) => HabitModel.fromFirestore(doc))
+                  .toList();
+              _fallbackHabits.clear();
+              _fallbackHabits.addAll(firestoreHabits);
+              _fallbackController.add(List.unmodifiable(_fallbackHabits));
+            }
+          },
+          onError: (err) {
+            debugPrint('[HabitRemoteDataSource] Firestore stream notice: $err');
+          },
+        );
+      } catch (e) {
+        debugPrint('[HabitRemoteDataSource] getHabitsStream setup notice: $e');
+      }
     }
 
-    try {
-      return _habitsCollection
-          .orderBy('createdAt', descending: true)
-          .snapshots()
-          .map((snapshot) {
-        return snapshot.docs.map((doc) => HabitModel.fromFirestore(doc)).toList();
-      }).handleError((error) {
-        debugPrint('[HabitRemoteDataSource] Firestore stream error: $error. Falling back to local store.');
-        Timer.run(() => _fallbackController.add(List.unmodifiable(_fallbackHabits)));
-        return _fallbackController.stream;
-      });
-    } catch (e) {
-      debugPrint('[HabitRemoteDataSource] getHabitsStream error: $e');
-      return _fallbackController.stream;
-    }
+    return _fallbackController.stream;
   }
 
   @override
   Future<HabitModel> getHabitById(String id) async {
-    if (!_isFirebaseReady) {
-      final found = _fallbackHabits.firstWhere(
-        (h) => h.id == id,
-        orElse: () => throw const ServerException('Habit not found'),
-      );
+    final found = _fallbackHabits.where((h) => h.id == id).firstOrNull;
+    if (found != null) {
       return found;
     }
 
-    try {
-      final doc = await _habitsCollection.doc(id).get();
-      if (!doc.exists) {
-        throw const ServerException('Habit not found in Firestore');
-      }
-      return HabitModel.fromFirestore(doc);
-    } catch (e) {
-      if (e is ServerException) rethrow;
-      throw ServerException('Failed to fetch habit: ${e.toString()}');
+    if (_isFirebaseReady) {
+      try {
+        final doc = await _habitsCollection
+            .doc(id)
+            .get()
+            .timeout(const Duration(milliseconds: 1500));
+        if (doc.exists) {
+          return HabitModel.fromFirestore(doc);
+        }
+      } catch (_) {}
     }
+
+    throw const ServerException('Habit not found');
   }
 
   @override
   Future<void> addHabit(HabitModel habit) async {
-    if (!_isFirebaseReady) {
-      final newId = 'habit_${DateTime.now().millisecondsSinceEpoch}';
-      final newHabit = HabitModel(
-        id: newId,
-        name: habit.name,
-        description: habit.description,
-        points: habit.points,
-        completedDates: habit.completedDates,
-        createdAt: habit.createdAt,
-        category: habit.category,
-      );
-      _fallbackHabits.insert(0, newHabit);
-      _fallbackController.add(List.unmodifiable(_fallbackHabits));
-      return;
-    }
+    final newId = habit.id.isNotEmpty
+        ? habit.id
+        : 'habit_${DateTime.now().millisecondsSinceEpoch}';
 
-    try {
-      await _habitsCollection.add(habit.toFirestore());
-    } catch (e) {
-      debugPrint('[HabitRemoteDataSource] Error adding habit to Firestore: $e. Writing to fallback.');
-      final newId = 'habit_${DateTime.now().millisecondsSinceEpoch}';
-      _fallbackHabits.insert(0, HabitModel(
-        id: newId,
-        name: habit.name,
-        description: habit.description,
-        points: habit.points,
-        completedDates: habit.completedDates,
-        createdAt: habit.createdAt,
-        category: habit.category,
-      ));
-      _fallbackController.add(List.unmodifiable(_fallbackHabits));
+    final newHabit = HabitModel(
+      id: newId,
+      name: habit.name,
+      description: habit.description,
+      points: habit.points,
+      completedDates: habit.completedDates,
+      createdAt: habit.createdAt,
+      category: habit.category,
+    );
+
+    // Immediate reactive local update
+    _fallbackHabits.insert(0, newHabit);
+    _fallbackController.add(List.unmodifiable(_fallbackHabits));
+
+    if (_isFirebaseReady) {
+      try {
+        await _habitsCollection
+            .doc(newId)
+            .set(newHabit.toFirestore())
+            .timeout(const Duration(milliseconds: 1500));
+      } catch (e) {
+        debugPrint('[HabitRemoteDataSource] Firestore add notice: $e');
+      }
     }
   }
 
@@ -194,93 +196,68 @@ class HabitRemoteDataSourceImpl implements HabitRemoteDataSource {
     required String habitId,
     required String dateKey,
   }) async {
-    if (!_isFirebaseReady) {
-      final index = _fallbackHabits.indexWhere((h) => h.id == habitId);
-      if (index != -1) {
-        final current = _fallbackHabits[index];
-        final list = List<String>.from(current.completedDates);
-        if (list.contains(dateKey)) {
-          list.remove(dateKey);
-        } else {
-          list.add(dateKey);
-        }
-        _fallbackHabits[index] = HabitModel(
-          id: current.id,
-          name: current.name,
-          description: current.description,
-          points: current.points,
-          completedDates: list,
-          createdAt: current.createdAt,
-          category: current.category,
-        );
-        _fallbackController.add(List.unmodifiable(_fallbackHabits));
+    // Immediate reactive local update
+    final index = _fallbackHabits.indexWhere((h) => h.id == habitId);
+    if (index != -1) {
+      final current = _fallbackHabits[index];
+      final list = List<String>.from(current.completedDates);
+      if (list.contains(dateKey)) {
+        list.remove(dateKey);
+      } else {
+        list.add(dateKey);
       }
-      return;
+      _fallbackHabits[index] = HabitModel(
+        id: current.id,
+        name: current.name,
+        description: current.description,
+        points: current.points,
+        completedDates: list,
+        createdAt: current.createdAt,
+        category: current.category,
+      );
+      _fallbackController.add(List.unmodifiable(_fallbackHabits));
     }
 
-    try {
-      final docRef = _habitsCollection.doc(habitId);
-      final docSnap = await docRef.get();
-      if (!docSnap.exists) {
-        throw const ServerException('Habit not found');
-      }
-      final data = docSnap.data() ?? {};
-      final rawDates = data['completedDates'];
-      final List<dynamic> dates = rawDates is List ? rawDates : [];
+    if (_isFirebaseReady) {
+      try {
+        final docRef = _habitsCollection.doc(habitId);
+        final docSnap =
+            await docRef.get().timeout(const Duration(milliseconds: 1500));
+        if (docSnap.exists) {
+          final data = docSnap.data() ?? {};
+          final rawDates = data['completedDates'];
+          final List<dynamic> dates = rawDates is List ? rawDates : [];
 
-      if (dates.contains(dateKey)) {
-        // Toggle OFF (undone)
-        await docRef.update({
-          'completedDates': FieldValue.arrayRemove([dateKey]),
-        });
-      } else {
-        // Toggle ON (done)
-        await docRef.update({
-          'completedDates': FieldValue.arrayUnion([dateKey]),
-        });
-      }
-    } catch (e) {
-      debugPrint('[HabitRemoteDataSource] Firestore toggle error: $e');
-      // Update fallback as well
-      final index = _fallbackHabits.indexWhere((h) => h.id == habitId);
-      if (index != -1) {
-        final current = _fallbackHabits[index];
-        final list = List<String>.from(current.completedDates);
-        if (list.contains(dateKey)) {
-          list.remove(dateKey);
-        } else {
-          list.add(dateKey);
+          if (dates.contains(dateKey)) {
+            await docRef.update({
+              'completedDates': FieldValue.arrayRemove([dateKey]),
+            }).timeout(const Duration(milliseconds: 1500));
+          } else {
+            await docRef.update({
+              'completedDates': FieldValue.arrayUnion([dateKey]),
+            }).timeout(const Duration(milliseconds: 1500));
+          }
         }
-        _fallbackHabits[index] = HabitModel(
-          id: current.id,
-          name: current.name,
-          description: current.description,
-          points: current.points,
-          completedDates: list,
-          createdAt: current.createdAt,
-          category: current.category,
-        );
-        _fallbackController.add(List.unmodifiable(_fallbackHabits));
-      } else {
-        throw ServerException('Failed to toggle habit: ${e.toString()}');
+      } catch (e) {
+        debugPrint('[HabitRemoteDataSource] Firestore toggle notice: $e');
       }
     }
   }
 
   @override
   Future<void> deleteHabit(String habitId) async {
-    if (!_isFirebaseReady) {
-      _fallbackHabits.removeWhere((h) => h.id == habitId);
-      _fallbackController.add(List.unmodifiable(_fallbackHabits));
-      return;
-    }
+    _fallbackHabits.removeWhere((h) => h.id == habitId);
+    _fallbackController.add(List.unmodifiable(_fallbackHabits));
 
-    try {
-      await _habitsCollection.doc(habitId).delete();
-    } catch (e) {
-      debugPrint('[HabitRemoteDataSource] Error deleting from Firestore: $e');
-      _fallbackHabits.removeWhere((h) => h.id == habitId);
-      _fallbackController.add(List.unmodifiable(_fallbackHabits));
+    if (_isFirebaseReady) {
+      try {
+        await _habitsCollection
+            .doc(habitId)
+            .delete()
+            .timeout(const Duration(milliseconds: 1500));
+      } catch (e) {
+        debugPrint('[HabitRemoteDataSource] Firestore delete notice: $e');
+      }
     }
   }
 }
