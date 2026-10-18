@@ -137,7 +137,7 @@ $$\text{Presentation Layer (UI / BLoC)} \longrightarrow \text{Domain Layer (Use 
 
 ### 1. Clone & Install Dependencies
 ```bash
-git clone <your-repo-link>
+git clone https://github.com/abdul7860924928/daily_habit_tracker.git
 cd daily_habit_tracker
 flutter pub get
 ```
@@ -231,6 +231,7 @@ To verify that the code strictly adheres to Clean Architecture rules:
 
 ---
 
-## 👨‍💻 Author
-- **Abdul Raheem**
-- Built with ❤️ in Flutter & Firebase
+## 👨‍💻 Author & Repository
+- **GitHub Repository**: [daily_habit_tracker](https://github.com/abdul7860924928/daily_habit_tracker)
+- **Author**: [Abdul Raheem](https://github.com/abdul7860924928)
+- Built with ❤️ using Flutter, Firebase & Clean Architecture
